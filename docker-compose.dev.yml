@@ -4,84 +4,95 @@ services:
 
   traefik:
     image: traefik
-    container_name: traefik
+    container_name: "traefik-dev"
     command: --api --docker
     volumes:
+      - ./traefik/dev/traefik.toml:/etc/traefik/traefik.toml
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./traefik/prod/traefik.toml:/etc/traefik/traefik.toml
-      - /var/:/var/acme.json
     ports:
       - "443:443"
       - "80:80"
       - "8070:8080"
     networks:
       - main
-    labels:
-      - traefik.enable=false
 
   db:
-    container_name: "db-prod"
+    container_name: "db-dev"
     image: postgres
     networks:
       - main
     volumes:
-      - pg-data:/var/lib/postgresql/data
-    labels:
-      - traefik.enable=false
+      - pg-data-dev:/var/lib/postgresql/data
 
   backend:
-    container_name: backend_prod_vet
+    container_name: "backend-dev"
     build: ./backend
-    command: /start_prod.sh
+    command: /start_dev.sh
     volumes:
       - ./backend:/code
-      - django-static:/code/static
+      - django-static-dev:/code/static
     ports:
       - "8000:8000"
     networks:
       - main
     environment:
-      - DEBUG=False
+      - DEBUG=True
       - VUE_APP_DEMO_PASSWORD=${VUE_APP_DEMO_PASSWORD}
     depends_on:
       - db
-    labels:
-      - traefik.enable=false
 
-  nginx:
-    container_name: "nginx-prod"
+  frontend:
+    container_name: "frontend-dev"
     build:
-      context: .
-      dockerfile: nginx/prod/Dockerfile
+      context: ./frontend
+    volumes:
+      - ./frontend:/app/:ro
+      - /app/node_modules
+    stdin_open: true
+    tty: true
     ports:
-      - "90:80"
+      - "8080:8080"
+    networks:
+      - main
     depends_on:
       - backend
+      - db
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+      - CHOKIDAR_INTERVAL=100
+      - YOUR_APP_WEB_HTTP_PORT=8080
+
+  nginx:
+    container_name: "nginx-dev"
+    build:
+      context: .
+      dockerfile: nginx/dev/Dockerfile
+    depends_on:
+      - backend
+      - frontend
+      - flower
     volumes:
-      - ./nginx/prod/prod.conf:/etc/nginx/nginx.conf:ro
-      - django-static:/usr/src/app/static
+      - ./nginx/dev/dev.conf:/etc/nginx/nginx.conf:ro
+      - django-static-dev:/usr/src/app/static
     networks:
       - main
     labels:
       - "traefik.backend=nginx"
-      - "traefik.docker.network=main"
-      - "traefik.frontend.rule=Host:verbose-equals-true.tk"
-      - "traefik.enable=true"
-      - "traefik.frontend.passHostHeader=true"
-      - "traefik.port=80"
+      - "traefik.frontend.rule=PathPrefix: /"
+      - traefik.docker.network=main
+      - traefik.port=80
 
   redis:
     image: redis:alpine
-    container_name: "redis-prod"
+    container_name: "redis-dev"
     networks:
       - main
-    labels:
-      - traefik.enable=false
 
   celery:
     build: ./backend
-    container_name: "celery-prod"
-    command: bash -c 'celery worker --app=backend.celery_app:app --loglevel=info'
+    container_name: "celery-dev"
+    command: bash -c 'python3 manage.py watch_celery'
     volumes:
       - ./backend:/code
     depends_on:
@@ -89,12 +100,10 @@ services:
       - redis
     networks:
       - main
-    labels:
-      - traefik.enable=false
 
   flower:
     image: mher/flower
-    container_name: "flower-prod"
+    container_name: "flower-dev"
     command: "--url_prefix=flower --basic_auth=${FLOWER_USERNAME}:${FLOWER_PASSWORD}"
     environment:
       - CELERY_BROKER_URL=redis://redis:6379
@@ -106,12 +115,10 @@ services:
     depends_on:
       - celery
       - redis
-    labels:
-      - traefik.enable=false
 
   portainer:
     image: portainer/portainer
-    container_name: "portainer-prod"
+    container_name: "portainer-dev"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer-data:/data
@@ -119,14 +126,11 @@ services:
       - 9000:9000
     networks:
       - main
-    labels:
-      - traefik.enable=false
 
 volumes:
-  django-static:
+  django-static-dev:
   portainer-data:
-  pg-data:
-  traefik-data:
+  pg-data-dev:
 
 networks:
   main:
